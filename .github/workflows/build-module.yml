@@ -1,0 +1,26 @@
+name: Build kexec module
+
+on:
+  push:
+    branches: [kexec-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:android12-5.10-20260828
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for android12-5.10
+        run: |
+          make -C "$KDIR" M="$GITHUB_WORKSPACE" ARCH=arm64 LLVM=1 LLVM_IAS=1 CONFIG_KEXEC_MOD=m modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kexec-android12-5.10
+          path: |
+            *.ko
+            Module.symvers
