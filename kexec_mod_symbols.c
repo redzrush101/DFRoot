@@ -54,6 +54,16 @@ void (*kexec_sym_device_shutdown)(void) = NULL;
 void (*kexec_sym_syscore_shutdown)(void) = NULL;
 void (*kexec_sym___flush_dcache_area)(void *addr, size_t len) = kexec_mod_flush_dcache_fallback;
 
+void (*kexec_sym_kernel_restart_prepare)(char *cmd);
+void (*kexec_sym_migrate_to_reboot_cpu)(void);
+void (*kexec_sym_cpu_hotplug_enable)(void);
+void (*kexec_sym_machine_shutdown)(void);
+
+bool kexec_mod_protected_mode;
+unsigned int kexec_mod_boot_mode;
+module_param_named(protected_mode, kexec_mod_protected_mode, bool, 0400);
+module_param_named(boot_mode, kexec_mod_boot_mode, uint, 0400);
+
 /* Data pointers */
 struct blocking_notifier_head *kexec_sym_reboot_notifier_list = NULL;
 
@@ -95,7 +105,7 @@ int __attribute__((no_sanitize("cfi"))) kexec_mod_resolve_symbols(void)
         kexec_mod_err("Failed to lookup kallsyms_lookup_name. Cannot resolve symbols!\n");
         return -EFAULT;
     }
-    kexec_mod_info("Found kallsyms_lookup_name at 0x%px\n", kallsyms_lookup_name_ptr);
+    kexec_mod_info("Kernel symbol lookup available\n");
 
     /* 2. Resolve required symbols */
     kexec_sym_device_shutdown = (void *)kallsyms_lookup_name_ptr("device_shutdown");
@@ -111,6 +121,27 @@ int __attribute__((no_sanitize("cfi"))) kexec_mod_resolve_symbols(void)
     kexec_sym_reboot_notifier_list = (void *)kallsyms_lookup_name_ptr("reboot_notifier_list");
     if (kexec_sym_reboot_notifier_list)
         kexec_mod_info("  Bound reboot_notifier_list\n");
+
+    kexec_sym_kernel_restart_prepare = (void *)kallsyms_lookup_name_ptr("kernel_restart_prepare");
+    kexec_sym_migrate_to_reboot_cpu = (void *)kallsyms_lookup_name_ptr("migrate_to_reboot_cpu");
+    kexec_sym_cpu_hotplug_enable = (void *)kallsyms_lookup_name_ptr("cpu_hotplug_enable");
+    kexec_sym_machine_shutdown = (void *)kallsyms_lookup_name_ptr("machine_shutdown");
+    if (!kexec_sym_kernel_restart_prepare || !kexec_sym_migrate_to_reboot_cpu ||
+        !kexec_sym_cpu_hotplug_enable || !kexec_sym_machine_shutdown)
+        return -ENOENT;
+
+    /* A protected hypervisor cannot be replaced by an EL1 module. */
+    {
+        const bool *protected = (void *)kallsyms_lookup_name_ptr("kvm_protected_mode_initialized");
+        const u32 *boot_mode = (void *)kallsyms_lookup_name_ptr("__boot_cpu_mode");
+
+        kexec_mod_protected_mode = protected && READ_ONCE(*protected);
+        if (!boot_mode)
+            return -ENOENT;
+        kexec_mod_boot_mode = READ_ONCE(boot_mode[0]);
+        kexec_mod_info("Boot CPU mode %#x, protected KVM active: %u\n",
+                       kexec_mod_boot_mode, kexec_mod_protected_mode);
+    }
 
     /* Always use fallback for dcache flush to avoid CFI issues */
     kexec_mod_info("  Using fallback __flush_dcache_area (CFI safe)\n");

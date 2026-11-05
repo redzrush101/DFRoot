@@ -43,9 +43,7 @@ static bool enable_exec;
 module_param(enable_exec, bool, 0400);
 MODULE_PARM_DESC(enable_exec, "Allow a kernel handoff after platform validation");
 
-static int shutdown = 0;
-module_param(shutdown, int, 0644);
-MODULE_PARM_DESC(shutdown, "Perform device_shutdown() call (1=exec, 0=skip (default))");
+
 
 /* ============================================================
  * IOCTL Handlers
@@ -179,7 +177,6 @@ out_free_segments:
  */
 static long __attribute__((no_sanitize("cfi"))) kexec_mod_ioctl_exec(void)
 {
-    int ret;
 
     if (!enable_exec)
         return -EOPNOTSUPP;
@@ -191,27 +188,17 @@ static long __attribute__((no_sanitize("cfi"))) kexec_mod_ioctl_exec(void)
 
     kexec_mod_info("Executing kexec...\n");
 
-    /* Shutdown secondary CPUs */
-    ret = kexec_mod_smp_shutdown();
-    if (ret) {
-        kexec_mod_err("Failed to shutdown secondary CPUs\n");
-        return ret;
+    if (kexec_mod_protected_mode || kexec_mod_boot_mode != 0xe11) {
+        kexec_mod_err("Handoff requires EL1 boot without active protected KVM\n");
+        return -EOPNOTSUPP;
     }
 
-    /* Shutdown devices to stop DMA */
-    if (!shutdown) {
-        kexec_mod_info("Skipping device shutdown (default behavior)\n");
-    } else {
-        kexec_mod_info("Shutting down devices (requested by user)\n");
-        if (kexec_sym_device_shutdown) {
-            kexec_sym_device_shutdown();
-        } else {
-            kexec_mod_warn("device_shutdown symbol not found - DMA corruption possible!\n");
-        }
-    }
-
-    /* Mask all interrupts */
-    kexec_mod_mask_interrupts();
+    /* Follow the kernel's normal kexec shutdown order. Re-enable CPU hotplug
+     * after migrate_to_reboot_cpu(), since machine_shutdown() needs it. */
+    kexec_sym_kernel_restart_prepare(NULL);
+    kexec_sym_migrate_to_reboot_cpu();
+    kexec_sym_cpu_hotplug_enable();
+    kexec_sym_machine_shutdown();
 
     /* Point of no return - execute the new kernel */
     kexec_mod_machine_kexec(kexec_mod_image);

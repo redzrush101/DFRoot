@@ -198,6 +198,12 @@ extern void (*kexec_sym_device_shutdown)(void);
 extern void (*kexec_sym_syscore_shutdown)(void);
 extern void (*kexec_sym___flush_dcache_area)(void *addr, size_t len);
 extern struct blocking_notifier_head *kexec_sym_reboot_notifier_list;
+extern void (*kexec_sym_kernel_restart_prepare)(char *cmd);
+extern void (*kexec_sym_migrate_to_reboot_cpu)(void);
+extern void (*kexec_sym_cpu_hotplug_enable)(void);
+extern void (*kexec_sym_machine_shutdown)(void);
+extern bool kexec_mod_protected_mode;
+extern unsigned int kexec_mod_boot_mode;
 
 /* ============================================================
  * Global State
