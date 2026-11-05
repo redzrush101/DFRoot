@@ -71,7 +71,7 @@ static int execute(int fd)
     struct mntent *m;
     while ((m = getmntent(table))) {
         if ((strcmp(m->mnt_type, "ext4") && strcmp(m->mnt_type, "f2fs")) ||
-            !hasmntopt(m, "rw")) continue;
+            (strncmp(m->mnt_opts, "rw,", 3) && strcmp(m->mnt_opts, "rw"))) continue;
         int f = open(m->mnt_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         struct stat st;
         if (f < 0 || fstat(f, &st)) {
