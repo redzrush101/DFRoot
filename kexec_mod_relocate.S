@@ -82,7 +82,7 @@ SYM_CODE_START(kexec_mod_relocate_new_kernel)
      * Entry[n] = (n * 1GB) | 0x701
      */
     mov     x3, #0              /* Starting physical address = 0 */
-    mov     x4, #64             /* 64 entries = 64GB (512 would overflow table) */
+    mov     x4, #512            /* One page maps the complete 39-bit identity range. */
     mov     x5, x0              /* x5 = current table entry pointer */
     mov     x6, #0x40000000     /* x6 = 1GB increment */
 

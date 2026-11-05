@@ -94,6 +94,7 @@ struct kexec_mod_image {
     unsigned long start;
     struct page *control_code_page;
     struct page *swap_page;
+    struct page *identity_page;
 
     unsigned long nr_segments;
     struct kexec_mod_segment segment[KEXEC_MOD_SEGMENT_MAX];

@@ -122,142 +122,44 @@ static void kexec_mod_segment_flush(const struct kexec_mod_image *image)
 
 int kexec_mod_machine_prepare(struct kexec_mod_image *image)
 {
-    kexec_mod_image_info(image);
+    size_t code_size = kexec_mod_relocate_new_kernel_end - kexec_mod_relocate_new_kernel;
+    void *code;
+
+    if (PAGE_SHIFT != 12 || !code_size || code_size > PAGE_SIZE)
+        return -EOPNOTSUPP;
+    image->identity_page = kexec_mod_alloc_control_pages(image, 0);
+    if (!image->identity_page)
+        return -ENOMEM;
+    clear_page(page_address(image->identity_page));
+    code = page_address(image->control_code_page);
+    memcpy(code, kexec_mod_relocate_new_kernel, code_size);
+    kexec_sym___flush_dcache_area(code, code_size);
+    flush_icache_range((unsigned long)code, (unsigned long)code + code_size);
     return 0;
 }
 
 void kexec_mod_machine_cleanup(struct kexec_mod_image *image)
 {
-    /* Nothing to clean up */
+    /* Both pages belong to image->control_pages. */
 }
 
-/**
- * kexec_mod_machine_kexec - Execute the loaded kernel
- * @image: Image to execute
- *
- * This function does not return on success.
- */
 void __attribute__((no_sanitize("cfi"))) kexec_mod_machine_kexec(struct kexec_mod_image *image)
 {
-    phys_addr_t code_phys;
-    phys_addr_t page_table_phys;
-    struct page *pt_page;
-    struct page *code_page;
-    void *code_virt;
-    unsigned long code_size;
-    
-    void (*relocate_fn)(unsigned long, unsigned long, unsigned long,
-                        unsigned long, unsigned long, unsigned long,
-                        unsigned long);
+    void (*relocate)(unsigned long, unsigned long, unsigned long,
+                     unsigned long, unsigned long, unsigned long,
+                     unsigned long) = (void *)kexec_mod_relocate_new_kernel;
 
-    /* Calculate code size */
-    /* Calculate code size */
-    code_size = (unsigned long)kexec_mod_relocate_new_kernel_end - 
-                (unsigned long)kexec_mod_relocate_new_kernel;
-                
-    kexec_mod_info("Starting kexec transition [Point A]\n");
-    kexec_mod_info("Relocation code size: %lu bytes\n", code_size);
-    kexec_mod_image_info(image);
-
-    /* 
-     * 1. Allocate Page Table Page (Identity Map)
-     */
-    kexec_mod_info("[Point B] Allocating page table\n");
-    pt_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
-    if (!pt_page) {
-        kexec_mod_err("Failed to allocate page table\n");
-        return;
-    }
-    page_table_phys = page_to_phys(pt_page);
-    
-    /* 
-     * 2. Allocate Code Page (Relocation Stub destination)
-     */
-    kexec_mod_info("[Point C] Allocating code page\n");
-    code_page = alloc_pages(GFP_KERNEL, get_order(code_size));
-    if (!code_page) {
-        kexec_mod_err("Failed to allocate code page\n");
-        __free_page(pt_page);
-        return;
-    }
-    code_phys = page_to_phys(code_page);
-    code_virt = page_address(code_page);
-    
-    kexec_mod_info("Page table: phys=0x%llx\n", page_table_phys);
-    kexec_mod_info("Code page: virt=%px, phys=0x%llx\n", code_virt, code_phys);
-
-    /* 3. Copy relocation code to the contiguous page */
-    kexec_mod_info("[Point D] Copying relocation code to %px...\n", code_virt);
-    memcpy(code_virt, kexec_mod_relocate_new_kernel, code_size);
-    
-    /* Flush caches for the code copy */
-    kexec_mod_info("[Point E] Flushing dcache...\n");
-    kexec_sym___flush_dcache_area(code_virt, code_size);
-    
-    kexec_mod_info("[Point F] Flushing icache...\n");
-    kexec_mod_info("[Point F1] code_virt=%px, code_size=%lu\n", code_virt, code_size);
-    
-    /*
-     * IMPORTANT: flush_icache_range may send IPIs to other CPUs.
-     * This MUST be called BEFORE SMP shutdown or use local-only cache ops.
-     * Since we're called after SMP shutdown, use local invalidation only.
-     */
-    kexec_mod_info("[Point F2] Using local cache invalidation (no IPI)...\n");
-    
-    /* Use __flush_dcache_area which is local-only */
-    kexec_sym___flush_dcache_area(code_virt, code_size);
-    
-    /* Synchronization barriers */
-    dsb(sy);
-    
-    /* Invalidate I-cache locally - this should work after SMP stop */
-    asm volatile("ic iallu\n" "dsb sy\n" "isb\n" ::: "memory");
-    
-    kexec_mod_info("[Point F3] Local cache flush done\n");
-    
-    kexec_mod_info("[Point G] Cache flush complete.\n");
-
-    kexec_mod_image_info(image);
-
-    /* Flush the relocation list and source pages */
-    kexec_mod_info("[Point H] Flushing list...\n");
+    /* All allocations were completed during LOAD, before devices and CPUs
+     * are stopped. Only local cache operations are allowed at this point. */
     kexec_mod_list_flush(image);
-    if (image->head & IND_DONE) {
-        kexec_mod_info("[Point I] Flushing segments...\n");
+    if (image->head & IND_DONE)
         kexec_mod_segment_flush(image);
-    }
-
-    /* Disable interrupts */
-    kexec_mod_info("[Point J] Masking interrupts...\n");
+    kexec_sym___flush_dcache_area(page_address(image->identity_page), PAGE_SIZE);
     local_daif_mask();
-
-    kexec_mod_info("[Point K] Bye! Jumping to relocation code...\n");
-
-    /*
-     * Call the LOCAL relocation function (in module text).
-     * It will:
-     * 1. Setup identity map pointing to 'code_phys'
-     * 2. Jump to 'code_phys'
-     */
-    relocate_fn = (void (*)(unsigned long, unsigned long, unsigned long,
-                            unsigned long, unsigned long, unsigned long,
-                            unsigned long))
-                  kexec_mod_relocate_new_kernel;
-    
-    kexec_mod_info("[Point L] Calling relocate_fn at %px...\n", relocate_fn);
-    relocate_fn(0,                  /* el2_switch = 0 */
-                code_phys,          /* physical addr of code COPY */
-                image->head,        /* relocation list */
-                image->start,       /* kernel entry point */
-                image->dtb_mem,     /* dtb address */
-                page_table_phys,    /* page table physical address */
-                (unsigned long)page_address(pt_page)); /* page table virtual address */
-
-    /* Should never reach here */
-    kexec_mod_err("[Point M] Relocation returned unexpectedly!\n");
-    unreachable();
+    relocate(0, page_to_phys(image->control_code_page), image->head,
+             image->start, image->dtb_mem, page_to_phys(image->identity_page),
+             (unsigned long)page_address(image->identity_page));
+    BUG();
 }
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Kexec Module Author");
-MODULE_DESCRIPTION("Standalone Kexec ARM64 Support");
