@@ -2,7 +2,7 @@
 
 Port of [sarabpal-dev/kexec_mod](https://github.com/sarabpal-dev/kexec_mod), with the stock kernel shutdown path, segment validation, and a libfdt-based loader.
 
-Checked on a DOOGEE T30 Pro running `5.10.198-android12-9`: module insertion/removal, root-only status ioctls, stock Image staging/unloading, and filesystem freeze/thaw after a refused execution. The tablet boots at EL1 and protected KVM is inactive. The first handoff attempt stopped after CPU shutdown without a second-kernel marker. The relocation stub now preserves the live kernel MAIR entries; a second test is pending.
+Checked on a DOOGEE T30 Pro running `5.10.198-android12-9`: module insertion/removal, root-only status ioctls, stock Image staging/unloading, and filesystem freeze/thaw after a refused execution. The tablet boots at EL1 and protected KVM is inactive. Kernel handoff is confirmed: the stock kernel started from RAM, ran the test PID 1, wrote `KEXEC_HANDOFF_OK_T30_20261105_A2`, and rebooted back into Android. The saved pstore log shows PID 1 at 0.503 seconds and reboot at 3.507 seconds.
 
 Build the module with the matching Android 12 5.10 DDK and Clang 12:
 
