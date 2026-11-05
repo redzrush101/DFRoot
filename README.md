@@ -1,80 +1,38 @@
-# kexec_mod Development & Testing Setup
+# kexec for Android 12 / Linux 5.10
 
-## Status
-Tested on GitHub kernel. Started but not all issues are fixed yet.
+Port of [sarabpal-dev/kexec_mod](https://github.com/sarabpal-dev/kexec_mod), with the stock kernel shutdown path, segment validation, and a libfdt-based loader.
 
-## Cuttlefish Setup
-Based on the official guide: [Get Started with Cuttlefish](https://source.android.com/docs/devices/cuttlefish/get-started)
+Checked on a DOOGEE T30 Pro running `5.10.198-android12-9`: module insertion/removal, root-only status ioctls, stock Image staging/unloading, and filesystem freeze/thaw after a refused execution. The tablet boots at EL1 and protected KVM is inactive. Full kernel handoff testing is in progress.
 
-**Environment Tested:**
-- **Build:** Android 14 (kernel 6.1.157)
-- **Host:** ARM64 Server My server specs was (13 cores 32GB RAM)
-- **Virtualization:** No KVM support (requires patches/wrapper)
-- **Note:** Setup failed on older builds (e.g., Android 12).
+Build the module with the matching Android 12 5.10 DDK and Clang 12:
 
-## Launch Instructions (No KVM)
-
-Since the ARM64 server lacks KVM support, I use `qemu_cli` with a custom wrapper to enforce TCG and modify arguments.
-
-### 1. Launch Script
-Run Cuttlefish with the following command:
-
-```bash
-HOME=$(pwd) ./bin/launch_cvd \
-  -vm_manager qemu_cli \
-  -report_anonymous_usage_stats=n \
-  --start_webrtc=false \
-  -qemu_binary_dir=$HOME/qemu-wrapper \
-  -memory_mb=8192 \
-  -cpus=16
+```sh
+make -C "$KDIR" M="$PWD" ARCH=arm64 LLVM=1 LLVM_IAS=1 CONFIG_KEXEC_MOD=m modules
 ```
 
-### 2. QEMU Wrapper
-Create the wrapper script at `$HOME/qemu-wrapper/qemu-system-aarch64`. This script forces TCG mode and removes unsupported options.
+Build the Android userspace tools with a native Termux compiler or NDK compiler:
 
-```bash
-#!/bin/bash
-{
-    echo "=== Called at $(date) ==="
-    echo "Original args: $*"
-
-    new_cmd="$*"
-
-    # Force TCG without thread parameter (not supported in older QEMU)
-    new_cmd="${new_cmd//accel=kvm/accel=tcg}"
-
-    # Use max CPU features for TCG
-    new_cmd="${new_cmd//-cpu host/-cpu max}"
-
-    # Remove problematic options
-    new_cmd="${new_cmd//scsi=off,/}"
-    new_cmd="${new_cmd//,scsi=off/}"
-    new_cmd="${new_cmd//-device AC97/}"
-
-    # Enable highmem
-    if [[ "$new_cmd" =~ -machine\ +([^\ ]+) ]]; then
-        old_machine="${BASH_REMATCH[1]}"
-        if [[ ! "$old_machine" =~ highmem ]]; then
-            new_machine="${old_machine},highmem=on"
-            new_cmd="${new_cmd//-machine $old_machine/-machine $new_machine}"
-        fi
-    fi
-
-    echo "Modified args: $new_cmd"
-} >> /tmp/qemu-debug.log
-
-eval exec /usr/bin/qemu-system-aarch64 $new_cmd
+```sh
+git submodule update --init --recursive
+make -C tools CC=clang
 ```
-*Make sure to `chmod +x` the wrapper.*
 
-## Kernel Modifications
+Run as root. Use an uncompressed ARM64 Image and a load address that matches its header and the device memory map:
 
-To enable `kexec_mod` functionality, the following patches were applied to the **child kernel** (the kernel we are going to execute):
+```sh
+insmod kexec_mod.ko enable_exec=1
+./kexec-load Image --load ADDRESS --dtb board.dtb --initrd initramfs.cpio.gz --cmdline '...'
+./kexec-load --status
+./kexec-load --exec
+```
 
-### Disable GKI Symbol Protection
-Modified `kernel/module/gki_module.c` to disable GKI protection checks.
-- **gki_is_module_protected_export**: Forced to return `false` (allowing all exports).
-- **gki_is_module_unprotected_symbol**: Forced to return `true` (allowing all access).
+`--exec` syncs and freezes writable ext4/f2fs filesystems before the handoff. A refused ioctl thaws them again. A successful jump replaces Android. The module refuses execution on an EL2 boot or with active protected KVM. Module insertion alone never starts a kernel.
 
-### SELinux
-Added `androidboot.selinux=permissive` to the kernel commandline (or bootconfig) to avoid permission denials during testing.
+To discard a staged image:
+
+```sh
+./kexec-load --unload
+rmmod kexec_mod
+```
+
+The test in `tools/kexec-selftest.c` exercises LOAD/UNLOAD and invalid inputs without issuing EXEC. `tools/handoff-init.c` and `tools/make-test-initramfs.py` create a minimal RAM-only test rootfs: PID 1 writes a marker to `/dev/kmsg`, waits three seconds, and requests a normal reboot. They do not mount storage.

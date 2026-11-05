@@ -193,6 +193,8 @@ void kexec_mod_psci_cpu_off(void);
 
 /* kexec_mod_symbols.c - must call kexec_mod_resolve_symbols() at init */
 int kexec_mod_resolve_symbols(void);
+int kexec_mod_region_intersects(phys_addr_t start, size_t size,
+                                unsigned long flags, unsigned long desc);
 
 /* Function pointers resolved at runtime */
 extern void (*kexec_sym_device_shutdown)(void);

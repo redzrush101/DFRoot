@@ -21,6 +21,16 @@
  * using inline assembly.
  * ============================================================ */
 
+static int (*region_intersects_ptr)(phys_addr_t start, size_t size,
+                                    unsigned long flags, unsigned long desc);
+
+int __attribute__((no_sanitize("cfi")))
+kexec_mod_region_intersects(phys_addr_t start, size_t size,
+                            unsigned long flags, unsigned long desc)
+{
+    return region_intersects_ptr(start, size, flags, desc);
+}
+
 static void kexec_mod_flush_dcache_fallback(void *addr, size_t len)
 {
     unsigned long start = (unsigned long)addr;
@@ -106,6 +116,10 @@ int __attribute__((no_sanitize("cfi"))) kexec_mod_resolve_symbols(void)
         return -EFAULT;
     }
     kexec_mod_info("Kernel symbol lookup available\n");
+
+    region_intersects_ptr = (void *)kallsyms_lookup_name_ptr("region_intersects");
+    if (!region_intersects_ptr)
+        return -ENOENT;
 
     /* 2. Resolve required symbols */
     kexec_sym_device_shutdown = (void *)kallsyms_lookup_name_ptr("device_shutdown");

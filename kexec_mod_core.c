@@ -175,7 +175,7 @@ int kexec_mod_sanity_check(struct kexec_mod_image *image)
             return -EADDRNOTAVAIL;
         }
 
-        if (region_intersects(mstart, image->segment[i].memsz,
+        if (kexec_mod_region_intersects(mstart, image->segment[i].memsz,
                               IORESOURCE_SYSTEM_RAM, IORES_DESC_NONE) != REGION_INTERSECTS)
             return -EADDRNOTAVAIL;
         if (image->start >= mstart && image->start - mstart < image->segment[i].bufsz)
