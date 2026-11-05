@@ -17,6 +17,7 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/uaccess.h>
+#include <linux/ioport.h>
 
 #include "kexec_mod.h"
 
@@ -152,6 +153,11 @@ int kexec_mod_sanity_check(struct kexec_mod_image *image)
 
     kexec_mod_dbg("Sanity checking %lu segments\n", nr_segments);
 
+    bool entry_valid = false, dtb_valid = image->dtb_mem == 0;
+
+    if (image->start & 3)
+        return -EINVAL;
+
     /* Check destination addresses are valid and page-aligned */
     for (i = 0; i < nr_segments; i++) {
         unsigned long mstart, mend;
@@ -159,7 +165,7 @@ int kexec_mod_sanity_check(struct kexec_mod_image *image)
         mstart = image->segment[i].mem;
         mend = mstart + image->segment[i].memsz;
 
-        if (mstart > mend) {
+        if (!image->segment[i].memsz || mstart >= mend) {
             kexec_mod_err("Segment %lu: start > end\n", i);
             return -EADDRNOTAVAIL;
         }
@@ -169,11 +175,22 @@ int kexec_mod_sanity_check(struct kexec_mod_image *image)
             return -EADDRNOTAVAIL;
         }
 
+        if (region_intersects(mstart, image->segment[i].memsz,
+                              IORESOURCE_SYSTEM_RAM, IORES_DESC_NONE) != REGION_INTERSECTS)
+            return -EADDRNOTAVAIL;
+        if (image->start >= mstart && image->start - mstart < image->segment[i].bufsz)
+            entry_valid = true;
+        if (image->dtb_mem >= mstart && image->dtb_mem - mstart < image->segment[i].bufsz)
+            dtb_valid = true;
+
         if (mend >= KEXEC_MOD_DESTINATION_MEMORY_LIMIT) {
             kexec_mod_err("Segment %lu: exceeds memory limit\n", i);
             return -EADDRNOTAVAIL;
         }
     }
+
+    if (!entry_valid || !dtb_valid)
+        return -EINVAL;
 
     /* Check for overlapping segments */
     for (i = 0; i < nr_segments; i++) {
@@ -347,8 +364,10 @@ int kexec_mod_load_segment(struct kexec_mod_image *image,
         }
 
         result = kexec_mod_add_page(image, page_to_phys(page));
-        if (result < 0)
+        if (result < 0) {
+            kexec_mod_free_pages(page);
             return result;
+        }
 
         ptr = kmap(page);
 

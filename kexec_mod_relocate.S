@@ -33,6 +33,7 @@
 .text
 
 SYM_CODE_START(kexec_mod_relocate_new_kernel)
+    BTI_C
 
     /* Save parameters */
     mov     x19, x0

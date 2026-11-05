@@ -9,3 +9,5 @@ Module.symvers
 modules.order
 .tmp_versions/
 tools/kexec_mod_load
+build/
+out-*/

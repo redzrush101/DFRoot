@@ -125,6 +125,7 @@ int kexec_mod_machine_prepare(struct kexec_mod_image *image)
     size_t code_size = kexec_mod_relocate_new_kernel_end - kexec_mod_relocate_new_kernel;
     void *code;
 
+    kexec_mod_image_info(image);
     if (PAGE_SHIFT != 12 || !code_size || code_size > PAGE_SIZE)
         return -EOPNOTSUPP;
     image->identity_page = kexec_mod_alloc_control_pages(image, 0);

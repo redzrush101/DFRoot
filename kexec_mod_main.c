@@ -69,6 +69,9 @@ static long kexec_mod_ioctl_load(struct kexec_mod_load_args __user *uargs)
         return -EFAULT;
     }
 
+    if (args.flags)
+        return -EINVAL;
+
     /* Validate segment count */
     if (args.nr_segments > KEXEC_MOD_SEGMENT_MAX) {
         kexec_mod_err("Too many segments: %lu > %d\n",
