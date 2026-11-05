@@ -151,9 +151,9 @@ int kexec_mod_sanity_check(struct kexec_mod_image *image)
     unsigned long total_pages = 0;
     unsigned long nr_pages = totalram_pages();
 
-    kexec_mod_dbg("Sanity checking %lu segments\n", nr_segments);
-
     bool entry_valid = false, dtb_valid = image->dtb_mem == 0;
+
+    kexec_mod_dbg("Sanity checking %lu segments\n", nr_segments);
 
     if (image->start & 3)
         return -EINVAL;

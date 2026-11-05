@@ -3,6 +3,8 @@
 #include <fcntl.h>
 #include <getopt.h>
 #include <limits.h>
+#include <linux/fs.h>
+#include <mntent.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,6 +59,57 @@ static uint64_t le64(const unsigned char *p)
     return v;
 }
 
+/* Keep persistent filesystems consistent while replacing the running kernel.
+ * Open everything first; once /data is frozen, no file writes are possible.
+ * An ioctl failure thaws every filesystem before returning to Android. */
+static int execute(int fd)
+{
+    struct { int fd; dev_t dev; } mounts[64];
+    size_t count = 0, frozen = 0;
+    FILE *table = setmntent("/proc/mounts", "r");
+    if (!table) return -1;
+    struct mntent *m;
+    while ((m = getmntent(table))) {
+        if ((strcmp(m->mnt_type, "ext4") && strcmp(m->mnt_type, "f2fs")) ||
+            !hasmntopt(m, "rw")) continue;
+        int f = open(m->mnt_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        struct stat st;
+        if (f < 0 || fstat(f, &st)) {
+            if (f >= 0) close(f);
+            endmntent(table);
+            for (size_t i = 0; i < count; i++) close(mounts[i].fd);
+            return -1;
+        }
+        size_t i;
+        for (i = 0; i < count; i++) if (mounts[i].dev == st.st_dev) break;
+        if (i < count) { close(f); continue; }
+        if (count == 64) {
+            close(f); endmntent(table);
+            for (i = 0; i < count; i++) close(mounts[i].fd);
+            errno = E2BIG;
+            return -1;
+        }
+        mounts[count].fd = f; mounts[count++].dev = st.st_dev;
+    }
+    endmntent(table);
+    sync();
+    int ret = -1;
+    while (frozen < count) {
+        if (ioctl(mounts[frozen].fd, FIFREEZE, 0)) goto thaw;
+        frozen++;
+    }
+    ret = ioctl(fd, KEXEC_MOD_IOCTL_EXEC);
+thaw:;
+    int saved = errno;
+    while (frozen) {
+        if (ioctl(mounts[--frozen].fd, FITHAW, 0))
+            perror("thaw filesystem");
+    }
+    for (size_t i = 0; i < count; i++) close(mounts[i].fd);
+    errno = saved;
+    return ret;
+}
+
 static void usage(const char *prog)
 {
     fprintf(stderr, "Usage: %s Image --load ADDRESS --dtb FILE [--initrd FILE] [--cmdline TEXT]\n"
@@ -104,8 +157,9 @@ int main(int argc, char **argv)
         int status = 0;
         unsigned long request = operation == 's' ? KEXEC_MOD_IOCTL_STATUS :
                                 operation == 'u' ? KEXEC_MOD_IOCTL_UNLOAD : KEXEC_MOD_IOCTL_EXEC;
-        if (operation == 'e') sync();
-        if (ioctl(fd, request, &status)) die("kexec ioctl");
+        if (operation == 'e') {
+            if (execute(fd)) die("kexec execute");
+        } else if (ioctl(fd, request, &status)) die("kexec ioctl");
         if (operation == 's') puts(status ? "Image loaded" : "No image loaded");
         close(fd);
         return EXIT_SUCCESS;
