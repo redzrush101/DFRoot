@@ -61,8 +61,11 @@ SYM_CODE_START(kexec_mod_relocate_new_kernel)
     b.gt    1b
     dsb     sy
 
-    /* Configure MAIR_EL1: Index 0 = Normal Memory (0xFF) */
-    mov     x1, #0xFF
+    /* Change only the identity map's attribute slot. The current TTBR1
+     * mapping still needs the other MAIR entries until the physical jump. */
+    mrs     x1, mair_el1
+    bic     x1, x1, #0xFF
+    orr     x1, x1, #0xFF
     msr     mair_el1, x1
     isb
     
